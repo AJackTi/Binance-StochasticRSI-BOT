@@ -1,40 +1,39 @@
-FROM python:3.8-slim-buster as build
+FROM deepnox/python-poetry:python3.11.5-alpine3.18-poetry1.6.1 AS builder
 
-WORKDIR /app
+ENV PYTHON_TA_LIB_VERSION "0.4.28"
 
-RUN apt-get update && \
-    apt-get -y upgrade && \
-    apt-get -y install -q build-essential wget && \
-    apt-get -y install -q python-dev libffi-dev libssl-dev python-pip
+USER root
+WORKDIR "/tmp"
 
-RUN cd /tmp && \
-    wget https://artiya4u.keybase.pub/TA-lib/ta-lib-0.4.0-src.tar.gz && \
-    tar -xvf ta-lib-0.4.0-src.tar.gz && \
-    cd ta-lib/ && \
-    ./configure --prefix=/usr && \
-    make && \
-    make install
+RUN apk add --no-cache --virtual .build-deps \
+        musl-dev \
+        linux-headers \
+        gcc \
+        g++ \
+        make \
+        curl \
+    && cd /tmp \
+    && curl -L -O http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz \
+    && tar -zxf ta-lib-0.4.0-src.tar.gz \
+    && cd ta-lib/ \
+    && ./configure --prefix=/usr \
+    && make \
+    && make install \
+    && pip3 install setuptools numpy \
+    && pip3 install ta-lib==${PYTHON_TA_LIB_VERSION} \
+    && apk del .build-deps \
+    && rm -rf /root/.cache \
+              /tmp/* \
+              /var/cache/apk/* \
+              /var/lib/apk/lists/*
 
-ADD ./app/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+FROM scratch 
 
-ENV PYTHONUNBUFFERED=1
+COPY --from=builder ["/", "/"]
+COPY ./app /app
 
-# Cleanup
-RUN devpackages=`dpkg -l|grep '\-dev'|awk '{print $2}'|xargs` \
-  && DEBIAN_FRONTEND=noninteractive apt-get -y remove --purge \
-    build-essential \
-    ${devpackages} \
-  && apt-get purge -y --auto-remove \
-  && apt-get clean \
-  && rm -rf /var/lib/apt/lists/* \
-  && rm -rf /tmp/* \
-  && rm -rf /var/tmp/*
+WORKDIR "/app"
 
-# Pack Image
-FROM scratch
-COPY --from=build / .
+RUN pip install --no-cache-dir -r ./requirements.txt
 
-ADD ./app /
-
-CMD ["python","-u","bot.py"]
+CMD ["python3","-u","bot.py"]
